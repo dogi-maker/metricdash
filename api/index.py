@@ -4,6 +4,9 @@ import urllib.request
 import urllib.parse
 from http.server import BaseHTTPRequestHandler
 
+import os
+GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
+
 def extract_sheet_id(url_or_id):
     m = re.search(r'/spreadsheets/d/([a-zA-Z0-9_-]+)', url_or_id)
     return m.group(1) if m else url_or_id.strip()
@@ -21,6 +24,29 @@ def parse_csv_line(line):
     result.append(''.join(current).strip())
     return result
 
+def call_groq(system, question):
+    payload = json.dumps({
+        'model': 'llama-3.3-70b-versatile',
+        'messages': [
+            {'role': 'system', 'content': system},
+            {'role': 'user', 'content': question}
+        ],
+        'max_tokens': 1024,
+        'temperature': 0.4
+    }).encode('utf-8')
+    req = urllib.request.Request(
+        'https://api.groq.com/openai/v1/chat/completions',
+        data=payload,
+        headers={
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + GROQ_API_KEY
+        },
+        method='POST'
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read().decode('utf-8'))
+    return data['choices'][0]['message']['content']
+
 class handler(BaseHTTPRequestHandler):
 
     def send_json(self, data, status=200):
@@ -28,7 +54,7 @@ class handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
@@ -37,7 +63,7 @@ class handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.end_headers()
 
@@ -75,6 +101,33 @@ class handler(BaseHTTPRequestHandler):
                         row.append('')
                     rows.append(dict(zip(headers, row[:len(headers)])))
                 self.send_json({'headers': headers, 'rows': rows, 'total': len(rows)})
+            except Exception as e:
+                self.send_json({'error': str(e)}, 500)
+            return
+
+        self.send_json({'error': 'Rota nao encontrada'}, 404)
+
+    def do_POST(self):
+        path = urllib.parse.urlparse(self.path).path
+        length = int(self.headers.get('Content-Length', 0))
+        body = json.loads(self.rfile.read(length).decode('utf-8')) if length else {}
+
+        if path in ('/api/ask', '/ask'):
+            context = body.get('context', '')
+            question = body.get('question', '')
+            if not question:
+                self.send_json({'error': 'Campo question obrigatorio'}, 400)
+                return
+            system = (
+                'Voce e um assistente de analise de dados do MetricDash. '
+                'Responda sempre em portugues brasileiro, de forma clara e direta. '
+                'Use os dados fornecidos para responder com precisao. '
+                'Destaque insights, tendencias ou anomalias quando relevante. '
+                'Seja conciso mas completo.\n\nDADOS:\n' + context
+            )
+            try:
+                answer = call_groq(system, question)
+                self.send_json({'answer': answer})
             except Exception as e:
                 self.send_json({'error': str(e)}, 500)
             return
