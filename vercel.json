@@ -1,4 +1,3 @@
-
 {
   "rewrites": [
     { "source": "/api/sheet", "destination": "/api/sheet.py" },
