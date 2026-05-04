@@ -1,6 +1,6 @@
 {
   "rewrites": [
-    { "source": "/api/sheet", "destination": "/api/sheet.py" },
-    { "source": "/api/ping", "destination": "/api/sheet.py" }
+    { "source": "/api/sheet", "destination": "/api/index.py" },
+    { "source": "/api/ping", "destination": "/api/index.py" }
   ]
 }
