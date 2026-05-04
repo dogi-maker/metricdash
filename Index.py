@@ -47,7 +47,7 @@ def get_sheet():
             rows.append(dict(zip(headers, row[:len(headers)])))
         return jsonify({'headers': headers, 'rows': rows, 'total': len(rows)})
     except Exception as e:
-        return jsonifyy({'error': str(e)}), 500
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/ping')
 def ping():
