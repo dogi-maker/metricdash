@@ -1,9 +1,5 @@
+
 {
-  "functions": {
-    "api/sheet.py": {
-      "runtime": "python3.9"
-    }
-  },
   "rewrites": [
     { "source": "/api/sheet", "destination": "/api/sheet.py" },
     { "source": "/api/ping", "destination": "/api/sheet.py" }
