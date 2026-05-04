@@ -1,1 +1,6 @@
-requests
+{
+  "rewrites": [
+    { "source": "/api/sheet", "destination": "/api/sheet.py" },
+    { "source": "/api/ping", "destination": "/api/sheet.py" }
+  ]
+}
