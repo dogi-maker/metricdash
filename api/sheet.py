@@ -1,10 +1,8 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import requests
+import json
 import re
-
-app = Flask(__name__)
-CORS(app)
+import urllib.request
+import urllib.parse
+from http.server import BaseHTTPRequestHandler
 
 def extract_sheet_id(url_or_id):
     m = re.search(r'/spreadsheets/d/([a-zA-Z0-9_-]+)', url_or_id)
@@ -23,35 +21,55 @@ def parse_csv_line(line):
     result.append(''.join(current).strip())
     return result
 
-@app.route('/api/sheet')
-def get_sheet():
-    url = request.args.get('url', '')
-    sheet_name = request.args.get('sheet', '')
-    if not url:
-        return jsonify({'error': "Parâmetro 'url' obrigatório"}), 400
-    sheet_id = extract_sheet_id(url)
-    gid = f'&sheet={requests.utils.quote(sheet_name)}' if sheet_name else ''
-    csv_url = f'https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv{gid}'
-    try:
-        resp = requests.get(csv_url, timeout=10, headers={'User-Agent': 'MetricDash/1.0'})
-        resp.raise_for_status()
-        lines = [l for l in resp.text.splitlines() if l.strip()]
-        if not lines:
-            return jsonify({'error': 'Planilha vazia'}), 400
-        headers = parse_csv_line(lines[0])
-        rows = []
-        for line in lines[1:]:
-            row = parse_csv_line(line)
-            while len(row) < len(headers):
-                row.append('')
-            rows.append(dict(zip(headers, row[:len(headers)])))
-        return jsonify({'headers': headers, 'rows': rows, 'total': len(rows)})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
 
-@app.route('/api/ping')
-def ping():
-    return jsonify({'status': 'ok', 'version': '1.0'})
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
 
-if __name__ == '__main__':
-    app.run(debug=True)
+        if parsed.path == '/api/ping':
+            self.wfile.write(json.dumps({'status': 'ok', 'version': '1.0'}).encode())
+            return
+
+        if parsed.path == '/api/sheet':
+            url = params.get('url', [''])[0]
+            sheet_name = params.get('sheet', [''])[0]
+            if not url:
+                self.wfile.write(json.dumps({'error': 'Parametro url obrigatorio'}).encode())
+                return
+            try:
+                sheet_id = extract_sheet_id(url)
+                gid = '&sheet=' + urllib.parse.quote(sheet_name) if sheet_name else ''
+                csv_url = 'https://docs.google.com/spreadsheets/d/' + sheet_id + '/export?format=csv' + gid
+                req = urllib.request.Request(csv_url, headers={'User-Agent': 'MetricDash/1.0'})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    raw = resp.read().decode('utf-8')
+                lines = [l for l in raw.splitlines() if l.strip()]
+                if not lines:
+                    self.wfile.write(json.dumps({'error': 'Planilha vazia'}).encode())
+                    return
+                headers = parse_csv_line(lines[0])
+                rows = []
+                for line in lines[1:]:
+                    row = parse_csv_line(line)
+                    while len(row) < len(headers):
+                        row.append('')
+                    rows.append(dict(zip(headers, row[:len(headers)])))
+                result = json.dumps({'headers': headers, 'rows': rows, 'total': len(rows)}, ensure_ascii=False)
+                self.wfile.write(result.encode('utf-8'))
+            except Exception as e:
+                self.wfile.write(json.dumps({'error': str(e)}).encode())
+            return
+
+        self.wfile.write(json.dumps({'error': 'Rota nao encontrada'}).encode())
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
