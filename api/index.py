@@ -1,10 +1,10 @@
 import json
 import re
+import os
 import urllib.request
 import urllib.parse
 from http.server import BaseHTTPRequestHandler
 
-import os
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
 
 def extract_sheet_id(url_or_id):
@@ -117,6 +117,9 @@ class handler(BaseHTTPRequestHandler):
             question = body.get('question', '')
             if not question:
                 self.send_json({'error': 'Campo question obrigatorio'}, 400)
+                return
+            if not GROQ_API_KEY:
+                self.send_json({'error': 'Chave GROQ_API_KEY nao configurada no servidor'}, 500)
                 return
             system = (
                 'Voce e um assistente de analise de dados do MetricDash. '
