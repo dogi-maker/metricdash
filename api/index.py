@@ -5,7 +5,7 @@ import urllib.request
 import urllib.parse
 from http.server import BaseHTTPRequestHandler
 
-GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
+GROQ_API_KEY = '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'
 
 def extract_sheet_id(url_or_id):
     m = re.search(r'/spreadsheets/d/([a-zA-Z0-9_-]+)', url_or_id)
