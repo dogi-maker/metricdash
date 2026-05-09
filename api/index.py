@@ -76,6 +76,14 @@ class handler(BaseHTTPRequestHandler):
             self.send_json({'status': 'ok', 'version': '1.0'})
             return
 
+        if path in ('/api/debug', '/debug'):
+            self.send_json({
+                'groq_key_set': bool(GROQ_API_KEY),
+                'groq_key_length': len(GROQ_API_KEY),
+                'groq_key_preview': GROQ_API_KEY[:8] + '...' if GROQ_API_KEY else 'VAZIA'
+            })
+            return
+
         if path in ('/api/sheet', '/sheet'):
             url = params.get('url', [''])[0]
             sheet_name = params.get('sheet', [''])[0]
