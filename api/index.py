@@ -5,7 +5,7 @@ import urllib.request
 import urllib.parse
 from http.server import BaseHTTPRequestHandler
 
-GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
+OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
 
 def extract_sheet_id(url_or_id):
     m = re.search(r'/spreadsheets/d/([a-zA-Z0-9_-]+)', url_or_id)
@@ -24,9 +24,9 @@ def parse_csv_line(line):
     result.append(''.join(current).strip())
     return result
 
-def call_groq(system, question):
+def call_ai(system, question):
     payload = json.dumps({
-        'model': 'llama-3.1-8b-instant',
+        'model': 'meta-llama/llama-3.1-8b-instruct:free',
         'messages': [
             {'role': 'system', 'content': system},
             {'role': 'user', 'content': question}
@@ -35,11 +35,13 @@ def call_groq(system, question):
         'temperature': 0.4
     }).encode('utf-8')
     req = urllib.request.Request(
-        'https://api.groq.com/openai/v1/chat/completions',
+        'https://openrouter.ai/api/v1/chat/completions',
         data=payload,
         headers={
             'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + GROQ_API_KEY
+            'Authorization': 'Bearer ' + OPENROUTER_API_KEY,
+            'HTTP-Referer': 'https://metricdash.vercel.app',
+            'X-Title': 'MetricDash'
         },
         method='POST'
     )
@@ -78,9 +80,9 @@ class handler(BaseHTTPRequestHandler):
 
         if path in ('/api/debug', '/debug'):
             self.send_json({
-                'groq_key_set': bool(GROQ_API_KEY),
-                'groq_key_length': len(GROQ_API_KEY),
-                'groq_key_preview': GROQ_API_KEY[:8] + '...' if GROQ_API_KEY else 'VAZIA'
+                'openrouter_key_set': bool(OPENROUTER_API_KEY),
+                'openrouter_key_length': len(OPENROUTER_API_KEY),
+                'openrouter_key_preview': OPENROUTER_API_KEY[:8] + '...' if OPENROUTER_API_KEY else 'VAZIA'
             })
             return
 
@@ -126,8 +128,8 @@ class handler(BaseHTTPRequestHandler):
             if not question:
                 self.send_json({'error': 'Campo question obrigatorio'}, 400)
                 return
-            if not GROQ_API_KEY:
-                self.send_json({'error': 'Chave GROQ_API_KEY nao configurada no servidor'}, 500)
+            if not OPENROUTER_API_KEY:
+                self.send_json({'error': 'Chave OPENROUTER_API_KEY nao configurada'}, 500)
                 return
             system = (
                 'Voce e um assistente de analise de dados do MetricDash. '
@@ -137,7 +139,7 @@ class handler(BaseHTTPRequestHandler):
                 'Seja conciso mas completo.\n\nDADOS:\n' + context
             )
             try:
-                answer = call_groq(system, question)
+                answer = call_ai(system, question)
                 self.send_json({'answer': answer})
             except Exception as e:
                 self.send_json({'error': str(e)}, 500)
