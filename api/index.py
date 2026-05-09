@@ -5,7 +5,7 @@ import urllib.request
 import urllib.parse
 from http.server import BaseHTTPRequestHandler
 
-GROQ_API_KEY = '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'
+GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
 
 def extract_sheet_id(url_or_id):
     m = re.search(r'/spreadsheets/d/([a-zA-Z0-9_-]+)', url_or_id)
@@ -26,7 +26,7 @@ def parse_csv_line(line):
 
 def call_groq(system, question):
     payload = json.dumps({
-        'model': 'llama-3.3-70b-versatile',
+        'model': 'llama-3.1-8b-instant',
         'messages': [
             {'role': 'system', 'content': system},
             {'role': 'user', 'content': question}
