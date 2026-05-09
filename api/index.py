@@ -1,4 +1,3 @@
-# MetricDash API v2
 import json
 import re
 import os
@@ -120,8 +119,13 @@ class handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path
-        length = int(self.headers.get('Content-Length', 0))
-        body = json.loads(self.rfile.read(length).decode('utf-8')) if length else {}
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            raw = self.rfile.read(length) if length else b'{}'
+            body = json.loads(raw.decode('utf-8'))
+        except Exception as e:
+            self.send_json({'error': 'Body invalido: ' + str(e)}, 400)
+            return
 
         if path in ('/api/ask', '/ask'):
             context = body.get('context', '')
@@ -143,7 +147,7 @@ class handler(BaseHTTPRequestHandler):
                 answer = call_ai(system, question)
                 self.send_json({'answer': answer})
             except Exception as e:
-                self.send_json({'error': str(e)}, 500)
+                self.send_json({'error': 'Erro ao chamar IA: ' + str(e)}, 500)
             return
 
         self.send_json({'error': 'Rota nao encontrada'}, 404)
