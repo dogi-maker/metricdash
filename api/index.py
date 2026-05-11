@@ -1,28 +1,48 @@
 import json
-import re
 import os
-import urllib.request
+import re
 import urllib.parse
-from http.server import BaseHTTPRequestHandler
+import urllib.request
 
-GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
+
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+
 
 def extract_sheet_id(url_or_id):
-    m = re.search(r'spreadsheets/d/([a-zA-Z0-9-_]+)', url_or_id)
-    return m.group(1) if m else url_or_id.strip()
+    match = re.search(r"spreadsheets/d/([a-zA-Z0-9-_]+)", url_or_id or "")
+    return match.group(1) if match else (url_or_id or "").strip()
+
 
 def parse_csv_line(line):
-    result, current, in_quotes = [], [], False
+    result = []
+    current = []
+    in_quotes = False
+
     for ch in line:
         if ch == '"':
             in_quotes = not in_quotes
         elif ch == ',' and not in_quotes:
-            result.append(''.join(current).strip())
+            result.append("".join(current).strip())
             current = []
         else:
             current.append(ch)
-    result.append(''.join(current).strip())
+
+    result.append("".join(current).strip())
     return result
+
+
+def json_response(data, status=200):
+    return {
+        "statusCode": status,
+        "headers": {
+            "Content-Type": "application/json; charset=utf-8",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        },
+        "body": json.dumps(data, ensure_ascii=False),
+    }
+
 
 def call_ai(system, question):
     payload = json.dumps({
@@ -33,115 +53,106 @@ def call_ai(system, question):
         ],
         "max_tokens": 1024,
         "temperature": 0.4
-    }).encode('utf-8')
+    }).encode("utf-8")
 
     req = urllib.request.Request(
-        'https://api.groq.com/openai/v1/chat/completions',
+        "https://api.groq.com/openai/v1/chat/completions",
         data=payload,
         headers={
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {GROQ_API_KEY}',
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {GROQ_API_KEY}",
         },
-        method='POST'
+        method="POST"
     )
 
     with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read().decode('utf-8'))
-    return data['choices'][0]['message']['content']
+        data = json.loads(resp.read().decode("utf-8"))
+
+    return data["choices"][0]["message"]["content"]
 
 
-class handler(BaseHTTPRequestHandler):
+def handler(request):
+    method = request.method
+    url = urllib.parse.urlparse(request.path)
+    path = url.path
+    params = urllib.parse.parse_qs(url.query)
 
-    def send_json(self, data, status=200):
-        body = json.dumps(data, ensure_ascii=False).encode('utf-8')
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json; charset=utf-8')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+    if method == "OPTIONS":
+        return json_response({}, 204)
 
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-        self.end_headers()
+    if method == "GET":
+        if path in ["/api/ping", "/ping"]:
+            return json_response({"status": "ok", "version": "1.1"})
 
-    def do_GET(self):
-        parsed = urllib.parse.urlparse(self.path)
-        params = urllib.parse.parse_qs(parsed.query)
-        path = parsed.path
-
-        if path in ['/api/ping', '/ping']:
-            self.send_json({'status': 'ok', 'version': '1.0'})
-            return
-
-        if path in ['/api/debug', '/debug']:
-            self.send_json({
-                'groq_key_set': bool(GROQ_API_KEY),
-                'groq_key_length': len(GROQ_API_KEY),
-                'groq_key_preview': GROQ_API_KEY[:8] + '...' if GROQ_API_KEY else 'VAZIA'
+        if path in ["/api/debug", "/debug"]:
+            return json_response({
+                "groq_key_set": bool(GROQ_API_KEY),
+                "groq_key_length": len(GROQ_API_KEY),
+                "groq_key_preview": (GROQ_API_KEY[:8] + "...") if GROQ_API_KEY else "VAZIA"
             })
-            return
 
-        if path in ['/api/sheet', '/sheet']:
-            url = params.get('url', [''])[0]
-            sheet_name = params.get('sheet', [''])[0]
-            if not url:
-                self.send_json({'error': 'Parametro url obrigatorio'}, 400)
-                return
+        if path in ["/api/sheet", "/sheet"]:
+            url_param = params.get("url", [""])[0]
+            sheet_name = params.get("sheet", [""])[0]
+
+            if not url_param:
+                return json_response({"error": "Parametro url obrigatorio"}, 400)
+
             try:
-                sheet_id = extract_sheet_id(url)
-                gid = f'&gid={urllib.parse.quote(sheet_name)}' if sheet_name else ''
-                csv_url = f'https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv{gid}'
-                req = urllib.request.Request(csv_url, headers={'User-Agent': 'MetricDash/1.0'})
+                sheet_id = extract_sheet_id(url_param)
+                gid = f"&gid={urllib.parse.quote(sheet_name)}" if sheet_name else ""
+                csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv{gid}"
+
+                req = urllib.request.Request(
+                    csv_url,
+                    headers={"User-Agent": "MetricDash/1.0"}
+                )
+
                 with urllib.request.urlopen(req, timeout=10) as resp:
-                    raw = resp.read().decode('utf-8')
-                lines = [l for l in raw.splitlines() if l.strip()]
+                    raw = resp.read().decode("utf-8")
+
+                lines = [line for line in raw.splitlines() if line.strip()]
                 if not lines:
-                    self.send_json({'error': 'Planilha vazia'}, 400)
-                    return
+                    return json_response({"error": "Planilha vazia"}, 400)
+
                 headers = parse_csv_line(lines[0])
                 rows = []
+
                 for line in lines[1:]:
                     row = parse_csv_line(line)
                     while len(row) < len(headers):
-                        row.append('')
+                        row.append("")
                     rows.append(dict(zip(headers, row[:len(headers)])))
-                self.send_json({'headers': headers, 'rows': rows, 'total': len(rows)})
+
+                return json_response({
+                    "headers": headers,
+                    "rows": rows,
+                    "total": len(rows)
+                })
+
             except Exception as e:
-                self.send_json({'error': str(e)}, 500)
-            return
+                return json_response({"error": str(e)}, 500)
 
-        self.send_json({'error': 'Rota nao encontrada'}, 404)
+        return json_response({"error": "Rota nao encontrada"}, 404)
 
-    def do_POST(self):
-        path = urllib.parse.urlparse(self.path).path
-        try:
-            length = int(self.headers.get('Content-Length', 0))
-            raw = self.rfile.read(length) if length else b''
-            body = json.loads(raw.decode('utf-8'))
-        except Exception as e:
-            self.send_json({'error': f'Body invalido: {str(e)}'}, 400)
-            return
+    if method == "POST":
+        if path in ["/api/ask", "/ask"]:
+            try:
+                body = request.get_json()
+            except Exception as e:
+                return json_response({"error": f"Body invalido: {str(e)}"}, 400)
 
-        if path in ['/api/ask', '/ask']:
-    context = body.get('context', '')
-    question = body.get('question', '')
-    mode = body.get('mode', 'generic-spreadsheet-analysis')
+            context = body.get("context", "")
+            question = body.get("question", "")
+            mode = body.get("mode", "generic-spreadsheet-analysis")
 
-    if not question:
-        self.send_json({'error': 'Campo question obrigatorio'}, 400)
-        return
+            if not question:
+                return json_response({"error": "Campo question obrigatorio"}, 400)
 
-    if not GROQ_API_KEY:
-        self.send_json({'error': 'Chave GROQ_API_KEY nao configurada'}, 500)
-        return
+            if not GROQ_API_KEY:
+                return json_response({"error": "Chave GROQ_API_KEY nao configurada"}, 500)
 
-    system = f"""
+            system = f"""
 Voce e um assistente de analise de dados do MetricDash.
 
 REGRAS DE RESPOSTA:
@@ -169,18 +180,19 @@ CONTEXTO DOS DADOS:
 {context}
 """.strip()
 
-    user_prompt = f"""
+            user_prompt = f"""
 Pergunta do usuario:
 {question}
 
 Responda com base apenas no contexto.
 """.strip()
 
-    try:
-        answer = call_ai(system, user_prompt)
-        self.send_json({'answer': answer})
-    except Exception as e:
-        self.send_json({'error': f'Erro ao chamar IA: {str(e)}'}, 500)
-    return
+            try:
+                answer = call_ai(system, user_prompt)
+                return json_response({"answer": answer})
+            except Exception as e:
+                return json_response({"error": f"Erro ao chamar IA: {str(e)}"}, 500)
 
-        self.send_json({'error': 'Rota nao encontrada'}, 404)
+        return json_response({"error": "Rota nao encontrada"}, 404)
+
+    return json_response({"error": "Metodo nao suportado"}, 405)
