@@ -3,7 +3,10 @@ import os
 import re
 import urllib.parse
 import urllib.request
+from flask import Flask, request, jsonify
 
+
+app = Flask(__name__)
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
@@ -29,19 +32,6 @@ def parse_csv_line(line):
 
     result.append("".join(current).strip())
     return result
-
-
-def json_response(data, status=200):
-    return {
-        "statusCode": status,
-        "headers": {
-            "Content-Type": "application/json; charset=utf-8",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
-        },
-        "body": json.dumps(data, ensure_ascii=False),
-    }
 
 
 def call_ai(system, question):
@@ -71,88 +61,104 @@ def call_ai(system, question):
     return data["choices"][0]["message"]["content"]
 
 
-def handler(request):
-    method = request.method
-    url = urllib.parse.urlparse(request.path)
-    path = url.path
-    params = urllib.parse.parse_qs(url.query)
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
 
-    if method == "OPTIONS":
-        return json_response({}, 204)
 
-    if method == "GET":
-        if path in ["/api/ping", "/ping"]:
-            return json_response({"status": "ok", "version": "1.1"})
+@app.route("/api/ping", methods=["GET", "OPTIONS"])
+@app.route("/ping", methods=["GET", "OPTIONS"])
+def ping():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    return jsonify({"status": "ok", "version": "1.2"})
 
-        if path in ["/api/debug", "/debug"]:
-            return json_response({
-                "groq_key_set": bool(GROQ_API_KEY),
-                "groq_key_length": len(GROQ_API_KEY),
-                "groq_key_preview": (GROQ_API_KEY[:8] + "...") if GROQ_API_KEY else "VAZIA"
-            })
 
-        if path in ["/api/sheet", "/sheet"]:
-            url_param = params.get("url", [""])[0]
-            sheet_name = params.get("sheet", [""])[0]
+@app.route("/api/debug", methods=["GET", "OPTIONS"])
+@app.route("/debug", methods=["GET", "OPTIONS"])
+def debug():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    return jsonify({
+        "groq_key_set": bool(GROQ_API_KEY),
+        "groq_key_length": len(GROQ_API_KEY),
+        "groq_key_preview": (GROQ_API_KEY[:8] + "...") if GROQ_API_KEY else "VAZIA"
+    })
 
-            if not url_param:
-                return json_response({"error": "Parametro url obrigatorio"}, 400)
 
-            try:
-                sheet_id = extract_sheet_id(url_param)
-                gid = f"&gid={urllib.parse.quote(sheet_name)}" if sheet_name else ""
-                csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv{gid}"
+@app.route("/api/sheet", methods=["GET", "OPTIONS"])
+@app.route("/sheet", methods=["GET", "OPTIONS"])
+def sheet():
+    if request.method == "OPTIONS":
+        return ("", 204)
 
-                req = urllib.request.Request(
-                    csv_url,
-                    headers={"User-Agent": "MetricDash/1.0"}
-                )
+    url_param = request.args.get("url", "")
+    sheet_name = request.args.get("sheet", "")
 
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    raw = resp.read().decode("utf-8")
+    if not url_param:
+        return jsonify({"error": "Parametro url obrigatorio"}), 400
 
-                lines = [line for line in raw.splitlines() if line.strip()]
-                if not lines:
-                    return json_response({"error": "Planilha vazia"}, 400)
+    try:
+        sheet_id = extract_sheet_id(url_param)
+        gid = f"&gid={urllib.parse.quote(sheet_name)}" if sheet_name else ""
+        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv{gid}"
 
-                headers = parse_csv_line(lines[0])
-                rows = []
+        req = urllib.request.Request(
+            csv_url,
+            headers={"User-Agent": "MetricDash/1.0"}
+        )
 
-                for line in lines[1:]:
-                    row = parse_csv_line(line)
-                    while len(row) < len(headers):
-                        row.append("")
-                    rows.append(dict(zip(headers, row[:len(headers)])))
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read().decode("utf-8")
 
-                return json_response({
-                    "headers": headers,
-                    "rows": rows,
-                    "total": len(rows)
-                })
+        lines = [line for line in raw.splitlines() if line.strip()]
+        if not lines:
+            return jsonify({"error": "Planilha vazia"}), 400
 
-            except Exception as e:
-                return json_response({"error": str(e)}, 500)
+        headers = parse_csv_line(lines[0])
+        rows = []
 
-        return json_response({"error": "Rota nao encontrada"}, 404)
+        for line in lines[1:]:
+            row = parse_csv_line(line)
+            while len(row) < len(headers):
+                row.append("")
+            rows.append(dict(zip(headers, row[:len(headers)])))
 
-    if method == "POST":
-        if path in ["/api/ask", "/ask"]:
-            try:
-                body = request.get_json()
-            except Exception as e:
-                return json_response({"error": f"Body invalido: {str(e)}"}, 400)
+        return jsonify({
+            "headers": headers,
+            "rows": rows,
+            "total": len(rows)
+        })
 
-            context = body.get("context", "")
-            question = body.get("question", "")
-            mode = body.get("mode", "generic-spreadsheet-analysis")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-            if not question:
-                return json_response({"error": "Campo question obrigatorio"}, 400)
 
-            if not GROQ_API_KEY:
-                return json_response({"error": "Chave GROQ_API_KEY nao configurada"}, 500)
+@app.route("/api/ask", methods=["POST", "OPTIONS"])
+@app.route("/ask", methods=["POST", "OPTIONS"])
+def ask():
+    if request.method == "OPTIONS":
+        return ("", 204)
 
-            system = f"""
+    try:
+        body = request.get_json(force=True)
+    except Exception as e:
+        return jsonify({"error": f"Body invalido: {str(e)}"}), 400
+
+    context = body.get("context", "")
+    question = body.get("question", "")
+    mode = body.get("mode", "generic-spreadsheet-analysis")
+
+    if not question:
+        return jsonify({"error": "Campo question obrigatorio"}), 400
+
+    if not GROQ_API_KEY:
+        return jsonify({"error": "Chave GROQ_API_KEY nao configurada"}), 500
+
+    system = f"""
 Voce e um assistente de analise de dados do MetricDash.
 
 REGRAS DE RESPOSTA:
@@ -180,19 +186,15 @@ CONTEXTO DOS DADOS:
 {context}
 """.strip()
 
-            user_prompt = f"""
+    user_prompt = f"""
 Pergunta do usuario:
 {question}
 
 Responda com base apenas no contexto.
 """.strip()
 
-            try:
-                answer = call_ai(system, user_prompt)
-                return json_response({"answer": answer})
-            except Exception as e:
-                return json_response({"error": f"Erro ao chamar IA: {str(e)}"}, 500)
-
-        return json_response({"error": "Rota nao encontrada"}, 404)
-
-    return json_response({"error": "Metodo nao suportado"}, 405)
+    try:
+        answer = call_ai(system, user_prompt)
+        return jsonify({"answer": answer})
+    except Exception as e:
+        return jsonify({"error": f"Erro ao chamar IA: {str(e)}"}), 500
