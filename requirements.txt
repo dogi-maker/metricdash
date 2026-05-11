@@ -1,1 +1,1 @@
-requests
+# sem dependências externas
