@@ -26,7 +26,7 @@ def parse_csv_line(line):
 
 def call_ai(system, question):
     payload = json.dumps({
-        'model': 'meta-llama/llama-3.1-8b-instruct:free',
+        "model": "meta-llama/llama-3.3-70b-instruct:free",
         'messages': [
             {'role': 'system', 'content': system},
             {'role': 'user', 'content': question}
