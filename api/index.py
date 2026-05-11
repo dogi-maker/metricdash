@@ -129,26 +129,58 @@ class handler(BaseHTTPRequestHandler):
             return
 
         if path in ['/api/ask', '/ask']:
-            context = body.get('context', '')
-            question = body.get('question', '')
-            if not question:
-                self.send_json({'error': 'Campo question obrigatorio'}, 400)
-                return
-            if not GROQ_API_KEY:
-                self.send_json({'error': 'Chave GROQ_API_KEY nao configurada'}, 500)
-                return
-            system = f"""Voce e um assistente de analise de dados do MetricDash.
-Responda sempre em portugues brasileiro, de forma clara e direta.
-Use os dados fornecidos para responder com precisao.
-Destaque insights, tendencias ou anomalias quando relevante.
-Seja conciso mas completo.
+    context = body.get('context', '')
+    question = body.get('question', '')
+    mode = body.get('mode', 'generic-spreadsheet-analysis')
 
-{context}"""
-            try:
-                answer = call_ai(system, question)
-                self.send_json({'answer': answer})
-            except Exception as e:
-                self.send_json({'error': f'Erro ao chamar IA: {str(e)}'}, 500)
-            return
+    if not question:
+        self.send_json({'error': 'Campo question obrigatorio'}, 400)
+        return
+
+    if not GROQ_API_KEY:
+        self.send_json({'error': 'Chave GROQ_API_KEY nao configurada'}, 500)
+        return
+
+    system = f"""
+Voce e um assistente de analise de dados do MetricDash.
+
+REGRAS DE RESPOSTA:
+- Responda sempre em portugues do Brasil.
+- Seja claro, direto e util.
+- Use somente os dados fornecidos no contexto.
+- Nao invente colunas, periodos, metas, meses ou comparacoes que nao existam.
+- Se a planilha for simples, entregue insights simples e honestos.
+- Se faltar informacao para responder exatamente, diga isso e ofereca a melhor leitura possivel com base no que existe.
+- Quando fizer sentido, destaque:
+  1. quem esta na frente,
+  2. quem esta atras,
+  3. quem esta acima ou abaixo da media,
+  4. concentracao dos valores,
+  5. anomalias ou distribuicao desigual.
+- Se o usuario pedir insights, priorize resposta em bullets curtos.
+- Se houver ranking, cite nomes e valores.
+- Evite texto floreado.
+- Nunca diga que analisou algo que nao aparece no contexto.
+
+MODO:
+{mode}
+
+CONTEXTO DOS DADOS:
+{context}
+""".strip()
+
+    user_prompt = f"""
+Pergunta do usuario:
+{question}
+
+Responda com base apenas no contexto.
+""".strip()
+
+    try:
+        answer = call_ai(system, user_prompt)
+        self.send_json({'answer': answer})
+    except Exception as e:
+        self.send_json({'error': f'Erro ao chamar IA: {str(e)}'}, 500)
+    return
 
         self.send_json({'error': 'Rota nao encontrada'}, 404)
