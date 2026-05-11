@@ -5,8 +5,7 @@ import urllib.request
 import urllib.parse
 from http.server import BaseHTTPRequestHandler
 
-OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
-
+GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
 def extract_sheet_id(url_or_id):
     m = re.search(r'/spreadsheets/d/([a-zA-Z0-9_-]+)', url_or_id)
     return m.group(1) if m else url_or_id.strip()
@@ -26,25 +25,18 @@ def parse_csv_line(line):
 
 def call_ai(system, question):
     payload = json.dumps({
-        "model": "openrouter/auto",
-        'messages': [
-            {'role': 'system', 'content': system},
-            {'role': 'user', 'content': question}
-        ],
-        'max_tokens': 1024,
-        'temperature': 0.4
-    }).encode('utf-8')
-    req = urllib.request.Request(
-        'https://openrouter.ai/api/v1/chat/completions',
-        data=payload,
-        headers={
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + OPENROUTER_API_KEY,
-            'HTTP-Referer': 'https://metricdash.vercel.app',
-            'X-Title': 'MetricDash'
-        },
-        method='POST'
-    )
+    "model": "llama3-8b-8192",
+    ...
+}).encode('utf-8')
+req = urllib.request.Request(
+    'https://api.groq.com/openai/v1/chat/completions',
+    data=payload,
+    headers={
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {GROQ_API_KEY}',
+    },
+    method='POST'
+)
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read().decode('utf-8'))
     return data['choices'][0]['message']['content']
@@ -80,9 +72,9 @@ class handler(BaseHTTPRequestHandler):
 
         if path in ('/api/debug', '/debug'):
             self.send_json({
-                'openrouter_key_set': bool(OPENROUTER_API_KEY),
-                'openrouter_key_length': len(OPENROUTER_API_KEY),
-                'openrouter_key_preview': OPENROUTER_API_KEY[:8] + '...' if OPENROUTER_API_KEY else 'VAZIA'
+                'openrouter_key_set': bool(GROQ_API_KEY),
+                'openrouter_key_length': len(GROQ_API_KEY),
+                'openrouter_key_preview': GROQ_API_KEY[:8] + '...' if GROQ_API_KEY else 'VAZIA'
             })
             return
 
@@ -133,8 +125,8 @@ class handler(BaseHTTPRequestHandler):
             if not question:
                 self.send_json({'error': 'Campo question obrigatorio'}, 400)
                 return
-            if not OPENROUTER_API_KEY:
-                self.send_json({'error': 'Chave OPENROUTER_API_KEY nao configurada'}, 500)
+            if not GROQ_API_KEY:
+                self.send_json({'error': 'Chave GROQ_API_KEY nao configurada'}, 500)
                 return
             system = (
                 'Voce e um assistente de analise de dados do MetricDash. '
