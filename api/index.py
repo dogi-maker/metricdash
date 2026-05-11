@@ -6,8 +6,9 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler
 
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
+
 def extract_sheet_id(url_or_id):
-    m = re.search(r'/spreadsheets/d/([a-zA-Z0-9_-]+)', url_or_id)
+    m = re.search(r'spreadsheets/d/([a-zA-Z0-9-_]+)', url_or_id)
     return m.group(1) if m else url_or_id.strip()
 
 def parse_csv_line(line):
@@ -25,21 +26,29 @@ def parse_csv_line(line):
 
 def call_ai(system, question):
     payload = json.dumps({
-    "model": "llama3-8b-8192",
-    ...
-}).encode('utf-8')
-req = urllib.request.Request(
-    'https://api.groq.com/openai/v1/chat/completions',
-    data=payload,
-    headers={
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {GROQ_API_KEY}',
-    },
-    method='POST'
-)
+        "model": "llama3-8b-8192",
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": question}
+        ],
+        "max_tokens": 1024,
+        "temperature": 0.4
+    }).encode('utf-8')
+
+    req = urllib.request.Request(
+        'https://api.groq.com/openai/v1/chat/completions',
+        data=payload,
+        headers={
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {GROQ_API_KEY}',
+        },
+        method='POST'
+    )
+
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read().decode('utf-8'))
     return data['choices'][0]['message']['content']
+
 
 class handler(BaseHTTPRequestHandler):
 
@@ -66,19 +75,19 @@ class handler(BaseHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
         path = parsed.path
 
-        if path in ('/api/ping', '/ping'):
+        if path in ['/api/ping', '/ping']:
             self.send_json({'status': 'ok', 'version': '1.0'})
             return
 
-        if path in ('/api/debug', '/debug'):
+        if path in ['/api/debug', '/debug']:
             self.send_json({
-                'openrouter_key_set': bool(GROQ_API_KEY),
-                'openrouter_key_length': len(GROQ_API_KEY),
-                'openrouter_key_preview': GROQ_API_KEY[:8] + '...' if GROQ_API_KEY else 'VAZIA'
+                'groq_key_set': bool(GROQ_API_KEY),
+                'groq_key_length': len(GROQ_API_KEY),
+                'groq_key_preview': GROQ_API_KEY[:8] + '...' if GROQ_API_KEY else 'VAZIA'
             })
             return
 
-        if path in ('/api/sheet', '/sheet'):
+        if path in ['/api/sheet', '/sheet']:
             url = params.get('url', [''])[0]
             sheet_name = params.get('sheet', [''])[0]
             if not url:
@@ -86,8 +95,8 @@ class handler(BaseHTTPRequestHandler):
                 return
             try:
                 sheet_id = extract_sheet_id(url)
-                gid = '&sheet=' + urllib.parse.quote(sheet_name) if sheet_name else ''
-                csv_url = 'https://docs.google.com/spreadsheets/d/' + sheet_id + '/export?format=csv' + gid
+                gid = f'&gid={urllib.parse.quote(sheet_name)}' if sheet_name else ''
+                csv_url = f'https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv{gid}'
                 req = urllib.request.Request(csv_url, headers={'User-Agent': 'MetricDash/1.0'})
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     raw = resp.read().decode('utf-8')
@@ -113,13 +122,13 @@ class handler(BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         try:
             length = int(self.headers.get('Content-Length', 0))
-            raw = self.rfile.read(length) if length else b'{}'
+            raw = self.rfile.read(length) if length else b''
             body = json.loads(raw.decode('utf-8'))
         except Exception as e:
-            self.send_json({'error': 'Body invalido: ' + str(e)}, 400)
+            self.send_json({'error': f'Body invalido: {str(e)}'}, 400)
             return
 
-        if path in ('/api/ask', '/ask'):
+        if path in ['/api/ask', '/ask']:
             context = body.get('context', '')
             question = body.get('question', '')
             if not question:
@@ -128,18 +137,18 @@ class handler(BaseHTTPRequestHandler):
             if not GROQ_API_KEY:
                 self.send_json({'error': 'Chave GROQ_API_KEY nao configurada'}, 500)
                 return
-            system = (
-                'Voce e um assistente de analise de dados do MetricDash. '
-                'Responda sempre em portugues brasileiro, de forma clara e direta. '
-                'Use os dados fornecidos para responder com precisao. '
-                'Destaque insights, tendencias ou anomalias quando relevante. '
-                'Seja conciso mas completo.\n\nDADOS:\n' + context
-            )
+            system = f"""Voce e um assistente de analise de dados do MetricDash.
+Responda sempre em portugues brasileiro, de forma clara e direta.
+Use os dados fornecidos para responder com precisao.
+Destaque insights, tendencias ou anomalias quando relevante.
+Seja conciso mas completo.
+
+{context}"""
             try:
                 answer = call_ai(system, question)
                 self.send_json({'answer': answer})
             except Exception as e:
-                self.send_json({'error': 'Erro ao chamar IA: ' + str(e)}, 500)
+                self.send_json({'error': f'Erro ao chamar IA: {str(e)}'}, 500)
             return
 
         self.send_json({'error': 'Rota nao encontrada'}, 404)
