@@ -18,8 +18,11 @@ DEFAULT_MODELS = [
 
 
 def extract_sheet_id(url_or_id):
-    match = re.search(r"spreadsheets/d/([a-zA-Z0-9-_]+)", url_or_id or "")
-    return match.group(1) if match else (url_or_id or "").strip()
+    text = (url_or_id or "").strip()
+    match = re.search(r"spreadsheets/d/([a-zA-Z0-9-_]+)", text)
+    if match:
+        return match.group(1)
+    return text
 
 
 def parse_csv_line(line):
@@ -105,7 +108,7 @@ def call_ai(system, question):
                 {"role": "user", "content": question}
             ],
             "max_tokens": 1024,
-            "temperature": 0.4
+            "temperature": 0.2
         }
         data, err, status = request_json(f"{GROQ_BASE_URL}/chat/completions", payload, headers, timeout=30)
         if data and data.get("choices"):
@@ -138,7 +141,7 @@ def add_cors_headers(response):
 def ping():
     if request.method == "OPTIONS":
         return ("", 204)
-    return jsonify({"status": "ok", "version": "2.0"})
+    return jsonify({"status": "ok", "version": "2.1"})
 
 
 @app.route("/api/debug", methods=["GET", "OPTIONS"])
@@ -164,23 +167,24 @@ def sheet():
         return ("", 204)
 
     url_param = request.args.get("url", "")
-    sheet_name = request.args.get("sheet", "")
+    sheet_name = request.args.get("sheet", "").strip()
 
     if not url_param:
         return jsonify({"error": "Parametro url obrigatorio"}), 400
 
     try:
         sheet_id = extract_sheet_id(url_param)
-        gid = f"&gid={urllib.parse.quote(sheet_name)}" if sheet_name else ""
-        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv{gid}"
+        export_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
+        if sheet_name:
+            export_url += f"&sheet={urllib.parse.quote(sheet_name)}"
 
-        req = urllib.request.Request(csv_url, headers={"User-Agent": "MetricDash/1.0"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        req = urllib.request.Request(export_url, headers={"User-Agent": "MetricDash/1.0"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
             raw = resp.read().decode("utf-8")
 
         lines = [line for line in raw.splitlines() if line.strip()]
         if not lines:
-            return jsonify({"error": "Planilha vazia"}), 400
+            return jsonify({"error": "Planilha vazia ou aba nao encontrada"}), 400
 
         headers = parse_csv_line(lines[0])
         rows = []
@@ -190,7 +194,13 @@ def sheet():
                 row.append("")
             rows.append(dict(zip(headers, row[:len(headers)])))
 
-        return jsonify({"headers": headers, "rows": rows, "total": len(rows)})
+        return jsonify({"headers": headers, "rows": rows, "total": len(rows), "sheet_id": sheet_id})
+    except urllib.error.HTTPError as e:
+        try:
+            detail = e.read().decode("utf-8")
+        except Exception:
+            detail = str(e)
+        return jsonify({"error": f"Google Sheets respondeu HTTP {e.code}", "details": detail}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -212,24 +222,32 @@ def ask():
 
     if not question:
         return jsonify({"error": "Campo question obrigatorio"}), 400
-
     if not GROQ_API_KEY:
         return jsonify({"error": "Chave GROQ_API_KEY nao configurada"}), 500
 
     system = f"""
-Voce e um assistente de analise de dados do MetricDash.
-- Responda em portugues do Brasil.
-- Use apenas os dados fornecidos.
-- Nao invente metricas, datas, colunas ou comparacoes.
-- Se faltar informacao, diga isso claramente.
+Você é um assistente de análise de dados do MetricDash.
+
+REGRAS:
+- Responda sempre em português do Brasil.
+- Use apenas os dados fornecidos no contexto.
+- Não invente categorias, nomes de entidades, meses, colunas, áreas de negócio ou tipos de registro.
+- Nunca assuma que os itens são 'comidas', 'produtos', 'clientes', 'vendas' ou qualquer outro tipo fixo, a menos que isso esteja explicitamente nas colunas ou no contexto.
+- Sempre use os nomes reais das colunas ao explicar os resultados.
+- Se houver uma análise cruzada entre uma coluna categórica e uma coluna numérica, diga explicitamente algo como: 'Na coluna X, o item Y tem o maior valor em Z'.
+- Evite substantivos genéricos errados. Prefira 'item', 'registro', 'linha', 'categoria', ou o nome da coluna.
+- Se a estrutura da planilha for ambígua, diga isso com honestidade.
 - Se pedirem insights, entregue bullets curtos.
 - Se houver ranking, cite nomes e valores.
+- Não diga nada que não esteja apoiado no contexto.
+
 MODO: {mode}
+
 CONTEXTO DOS DADOS:
 {context}
 """.strip()
 
-    user_prompt = f"Pergunta do usuario:\n{question}\n\nResponda com base apenas no contexto."
+    user_prompt = f"Pergunta do usuario:\n{question}\n\nResponda com base apenas no contexto e use os nomes das colunas da planilha quando fizer referência aos dados."
 
     try:
         result = call_ai(system, user_prompt)
@@ -240,12 +258,8 @@ CONTEXTO DOS DADOS:
         })
     except Exception as e:
         raw = str(e)
-        parsed = None
         try:
             parsed = json.loads(raw)
         except Exception:
             parsed = {"message": raw}
-        return jsonify({
-            "error": "Erro ao chamar IA",
-            "details": parsed
-        }), 500
+        return jsonify({"error": "Erro ao chamar IA", "details": parsed}), 500
